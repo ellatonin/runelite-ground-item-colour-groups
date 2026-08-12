@@ -12,10 +12,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
-import java.util.concurrent.CountDownLatch;
 import javax.inject.Inject;
 import javax.swing.SwingUtilities;
-import javax.swing.SwingWorker;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.client.callback.ClientThread;
@@ -73,8 +71,9 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 	 * Every item known to the client, tradeable or not, keyed by its canonical (un-noted,
 	 * un-placeholdered) id. Built lazily on first use since it requires a full scan of the item
 	 * cache on the client thread; the result doesn't change during a session so it's cached here.
+	 * Volatile since it's written on the client thread and read on the EDT.
 	 */
-	private List<SearchItem> itemIndex;
+	private volatile List<SearchItem> itemIndex;
 
 	@Override
 	protected void startUp()
@@ -160,52 +159,33 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 
 	private void openItemSearch(Color colour)
 	{
-		Window owner = SwingUtilities.windowForComponent(panel);
-		panel.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-
-		new SwingWorker<List<SearchItem>, Void>()
+		List<SearchItem> cached = itemIndex;
+		if (cached != null)
 		{
-			@Override
-			protected List<SearchItem> doInBackground()
-			{
-				return getItemIndex();
-			}
+			showItemSearchDialog(colour, cached);
+			return;
+		}
 
-			@Override
-			protected void done()
+		panel.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+		clientThread.invoke(() ->
+		{
+			List<SearchItem> items = buildItemIndex();
+			itemIndex = items;
+
+			SwingUtilities.invokeLater(() ->
 			{
 				panel.setCursor(Cursor.getDefaultCursor());
-
-				List<SearchItem> items;
-				try
-				{
-					items = get();
-				}
-				catch (Exception e)
-				{
-					log.warn("Failed to build item index", e);
-					return;
-				}
-
-				ItemSearchDialog dialog = new ItemSearchDialog(owner, items, selected ->
-					configManager.setConfiguration(GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX + selected.getId(), colour));
-				dialog.setVisible(true);
-			}
-		}.execute();
+				showItemSearchDialog(colour, items);
+			});
+		});
 	}
 
-	/**
-	 * Returns the cached {@link #itemIndex}, building it on first call. Must not be called on the
-	 * EDT: {@link #buildItemIndex()} blocks the calling thread while the client thread does the
-	 * actual scan.
-	 */
-	private synchronized List<SearchItem> getItemIndex()
+	private void showItemSearchDialog(Color colour, List<SearchItem> items)
 	{
-		if (itemIndex == null)
-		{
-			itemIndex = buildItemIndex();
-		}
-		return itemIndex;
+		Window owner = SwingUtilities.windowForComponent(panel);
+		ItemSearchDialog dialog = new ItemSearchDialog(owner, items, selected ->
+			configManager.setConfiguration(GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX + selected.getId(), colour));
+		dialog.setVisible(true);
 	}
 
 	/**
@@ -217,37 +197,23 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 	private List<SearchItem> buildItemIndex()
 	{
 		Map<Integer, String> byId = new LinkedHashMap<>();
-		CountDownLatch latch = new CountDownLatch(1);
 
-		clientThread.invoke(() ->
+		int count = client.getItemCount();
+		for (int id = 0; id < count; id++)
 		{
-			int count = client.getItemCount();
-			for (int id = 0; id < count; id++)
+			int canonicalId = itemManager.canonicalize(id);
+			if (byId.containsKey(canonicalId))
 			{
-				int canonicalId = itemManager.canonicalize(id);
-				if (byId.containsKey(canonicalId))
-				{
-					continue;
-				}
-
-				String name = itemManager.getItemComposition(canonicalId).getName();
-				if (name == null || name.equalsIgnoreCase("null"))
-				{
-					continue;
-				}
-
-				byId.put(canonicalId, name);
+				continue;
 			}
-			latch.countDown();
-		});
 
-		try
-		{
-			latch.await();
-		}
-		catch (InterruptedException e)
-		{
-			Thread.currentThread().interrupt();
+			String name = itemManager.getItemComposition(canonicalId).getName();
+			if (name == null || name.equalsIgnoreCase("null"))
+			{
+				continue;
+			}
+
+			byId.put(canonicalId, name);
 		}
 
 		List<SearchItem> items = new ArrayList<>(byId.size());
