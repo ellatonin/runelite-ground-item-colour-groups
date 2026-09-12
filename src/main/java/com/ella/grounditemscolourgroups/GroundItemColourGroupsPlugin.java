@@ -205,16 +205,43 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 		{
 			if (colour != null)
 			{
-				promptForPatterns(colour, "");
+				addPattern(colour);
 			}
 		});
 		picker.setVisible(true);
 	}
 
 	@Override
-	public void editPatterns(Color groupColour, String currentPatternsCsv)
+	public void addPattern(Color groupColour)
 	{
-		promptForPatterns(groupColour, currentPatternsCsv);
+		Object input = JOptionPane.showInputDialog(panel,
+			"<html><body style='width:240px'>New wildcard pattern (* matches anything), matched case-insensitively "
+				+ "against item names - e.g. \"Clue scroll*\". Matching items get this colour automatically, "
+				+ "including items added to the game later.</body></html>",
+			"Add wildcard pattern", JOptionPane.PLAIN_MESSAGE, null, null, "");
+
+		if (input == null)
+		{
+			return;
+		}
+
+		String pattern = input.toString().trim();
+		if (pattern.isEmpty())
+		{
+			return;
+		}
+
+		// Purely additive - always read the current list and add to it, never replace it wholesale,
+		// so adding a pattern can never accidentally wipe out ones already there (e.g. from picking
+		// the same colour twice, or re-adding after an unrelated group's colour happened to match).
+		String hex = colourHex(groupColour);
+		List<String> patterns = splitPatterns(configManager.getConfiguration(OWN_CONFIG_GROUP, PATTERN_KEY_PREFIX + hex));
+		if (!patterns.contains(pattern))
+		{
+			patterns.add(pattern);
+			configManager.setConfiguration(OWN_CONFIG_GROUP, PATTERN_KEY_PREFIX + hex, String.join(", ", patterns));
+			refresh();
+		}
 	}
 
 	@Override
@@ -508,38 +535,6 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 			}
 			refresh();
 		});
-	}
-
-	private void promptForPatterns(Color colour, String initialText)
-	{
-		Object input = JOptionPane.showInputDialog(panel,
-			"<html><body style='width:260px'>Comma-separated wildcard patterns (* matches anything), matched "
-				+ "case-insensitively against item names - e.g. \"Clue scroll*\". Matching items get this "
-				+ "colour automatically (shown as a count, not listed individually), including items added to "
-				+ "the game later. Leave blank to remove all patterns from this group.</body></html>",
-			"Wildcard patterns", JOptionPane.PLAIN_MESSAGE, null, null, initialText);
-
-		if (input != null)
-		{
-			List<String> oldPatterns = splitPatterns(initialText);
-			List<String> newPatterns = splitPatterns(input.toString());
-
-			clientThread.invoke(() ->
-			{
-				applyPatternDiff(colour, oldPatterns, newPatterns);
-
-				String hex = colourHex(colour);
-				if (newPatterns.isEmpty())
-				{
-					configManager.unsetConfiguration(OWN_CONFIG_GROUP, PATTERN_KEY_PREFIX + hex);
-				}
-				else
-				{
-					configManager.setConfiguration(OWN_CONFIG_GROUP, PATTERN_KEY_PREFIX + hex, String.join(", ", newPatterns));
-				}
-				refresh();
-			});
-		}
 	}
 
 	/**

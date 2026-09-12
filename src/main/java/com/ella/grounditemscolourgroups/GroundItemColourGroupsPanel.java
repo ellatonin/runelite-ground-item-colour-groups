@@ -235,10 +235,10 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		JButton patternsButton = new JButton("*");
 		patternsButton.setToolTipText(patterns.isEmpty()
 			? "Add a wildcard name pattern (e.g. \"Clue scroll*\") so matching items join this colour automatically"
-			: "<html><body style='width:220px'>Add another wildcard pattern to this colour: " + String.join(", ", patterns)
-				+ "</body></html>");
+			: "<html><body style='width:220px'>Add another wildcard pattern to this colour (already has: "
+				+ String.join(", ", patterns) + ")</body></html>");
 		patternsButton.setMargin(new java.awt.Insets(0, 4, 0, 4));
-		patternsButton.addActionListener(e -> callbacks.editPatterns(colour, String.join(", ", patterns)));
+		patternsButton.addActionListener(e -> callbacks.addPattern(colour));
 
 		JButton deleteButton = new JButton("Delete");
 		deleteButton.setToolTipText("Delete this whole colour group: every item's highlight and every wildcard "
