@@ -110,10 +110,8 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		panel.setBorder(BorderFactory.createLineBorder(enabled ? colour : ColorScheme.MEDIUM_GRAY_COLOR, 2));
 
-		String patternSuffix = patternMatches.isEmpty() ? ""
-			: String.format(", %d pattern%s", patternMatches.size(), patternMatches.size() == 1 ? "" : "s");
-		JLabel swatchLabel = new JLabel(String.format("#%06X  (%d item%s%s)%s",
-			colour.getRGB() & 0xFFFFFF, items.size(), items.size() == 1 ? "" : "s", patternSuffix, enabled ? "" : " — off"));
+		JLabel swatchLabel = new JLabel(String.format("#%06X%s",
+			colour.getRGB() & 0xFFFFFF, enabled ? "" : " — off"));
 		swatchLabel.setOpaque(true);
 		swatchLabel.setBackground(colour);
 		swatchLabel.setForeground(readableTextColour(colour));
