@@ -786,8 +786,7 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 			List<PatternMatch> patternMatches = new ArrayList<>();
 			for (String pattern : patternsByColour.getOrDefault(colour, Collections.emptyList()))
 			{
-				int count = index == null ? 0 : countMatches(pattern, index);
-				patternMatches.add(new PatternMatch(pattern, count));
+				patternMatches.add(index == null ? new PatternMatch(pattern, 0, null) : buildPatternMatch(pattern, index));
 			}
 
 			groups.add(new ColourGroup(colour, groupDisplayName(colour), entry.getValue(), items, patternMatches));
@@ -815,18 +814,33 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 		});
 	}
 
-	private int countMatches(String pattern, List<SearchItem> index)
+	/**
+	 * Counts every item currently matching {@code pattern} and, for display, hydrates just the
+	 * first one found (reusing the hydration cache, so this costs a real itemManager lookup only
+	 * once per pattern ever seen) to give the pattern's row a real icon instead of a blank
+	 * placeholder - without paying that cost for every match, only one per pattern.
+	 */
+	private PatternMatch buildPatternMatch(String pattern, List<SearchItem> index)
 	{
 		Pattern compiled = compileWildcard(pattern);
 		int count = 0;
+		Integer firstMatchId = null;
 		for (SearchItem candidate : index)
 		{
-			if (compiled.matcher(candidate.getName()).matches())
+			if (!compiled.matcher(candidate.getName()).matches())
 			{
-				count++;
+				continue;
 			}
+
+			if (firstMatchId == null)
+			{
+				firstMatchId = candidate.getId();
+			}
+			count++;
 		}
-		return count;
+
+		AsyncBufferedImage sampleImage = firstMatchId == null ? null : hydrate(firstMatchId).getImage();
+		return new PatternMatch(pattern, count, sampleImage);
 	}
 
 	/**

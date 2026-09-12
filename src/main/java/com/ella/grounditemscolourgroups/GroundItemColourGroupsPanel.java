@@ -23,6 +23,7 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
 import net.runelite.client.ui.ColorScheme;
+import net.runelite.client.util.AsyncBufferedImage;
 import net.runelite.client.ui.PluginPanel;
 
 class GroundItemColourGroupsPanel extends PluginPanel
@@ -291,6 +292,12 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		iconLabel.setOpaque(true);
 		iconLabel.setBackground(ColorScheme.MEDIUM_GRAY_COLOR);
 		iconLabel.setBorder(BorderFactory.createLineBorder(ColorScheme.LIGHT_GRAY_COLOR, 1));
+		if (patternMatch.getSampleImage() != null)
+		{
+			// Still keeps the box background/border above - just gives it a real face (the first
+			// current match, alphabetically) instead of leaving it blank when there's one to show.
+			setScaledIcon(iconLabel, patternMatch.getSampleImage());
+		}
 
 		JLabel nameLabel = new JLabel(String.format("%s  (%d item%s)", patternMatch.getPattern(),
 			patternMatch.getMatchCount(), patternMatch.getMatchCount() == 1 ? "" : "s"));
@@ -329,7 +336,7 @@ class GroundItemColourGroupsPanel extends PluginPanel
 
 		JLabel iconLabel = new JLabel();
 		iconLabel.setPreferredSize(new Dimension(20, 20));
-		item.getImage().addTo(iconLabel);
+		setScaledIcon(iconLabel, item.getImage());
 
 		JLabel nameLabel = new JLabel(item.getName());
 		nameLabel.setForeground(Color.WHITE);
@@ -361,5 +368,20 @@ class GroundItemColourGroupsPanel extends PluginPanel
 	{
 		double luminance = (0.299 * background.getRed() + 0.587 * background.getGreen() + 0.114 * background.getBlue()) / 255;
 		return luminance > 0.55 ? Color.BLACK : Color.WHITE;
+	}
+
+	private static final int ICON_BOX_SIZE = 20;
+	private static final double ICON_SCALE = 0.7;
+
+	/**
+	 * Shows {@code image} shrunk to {@link #ICON_SCALE} of its natural size and centred in a
+	 * {@link #ICON_BOX_SIZE}-square box, repainting once the async image actually finishes loading -
+	 * the same "notify when ready" behaviour {@link AsyncBufferedImage#addTo} provides, just with
+	 * scaling applied instead of drawing at full (often oversized) native resolution.
+	 */
+	private static void setScaledIcon(JLabel label, AsyncBufferedImage image)
+	{
+		label.setIcon(new ScaledIcon(image, ICON_BOX_SIZE, ICON_SCALE));
+		image.onLoaded(label::repaint);
 	}
 }
