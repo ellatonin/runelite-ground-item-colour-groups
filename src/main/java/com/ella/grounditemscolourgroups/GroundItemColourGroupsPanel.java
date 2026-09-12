@@ -4,6 +4,7 @@ import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.util.ArrayList;
 import java.util.List;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
@@ -34,6 +35,12 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		addButton.setToolTipText("Assign a new item to a colour");
 		addButton.addActionListener(e -> callbacks.addNewGroup());
 
+		JButton addPatternButton = new JButton("+ Pattern");
+		addPatternButton.setToolTipText("<html><body style='width:220px'>Start a new colour group from a wildcard "
+			+ "name pattern (e.g. \"Clue scroll*\") instead of one item at a time - handy for large families like "
+			+ "clue rewards.</body></html>");
+		addPatternButton.addActionListener(e -> callbacks.addPatternGroup());
+
 		JButton refreshButton = new JButton("Refresh");
 		refreshButton.addActionListener(e -> callbacks.refresh());
 
@@ -41,6 +48,7 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		headerButtons.setBackground(ColorScheme.DARK_GRAY_COLOR);
 		headerButtons.setAlignmentX(java.awt.Component.LEFT_ALIGNMENT);
 		headerButtons.add(addButton);
+		headerButtons.add(addPatternButton);
 		headerButtons.add(refreshButton);
 
 		JPanel header = new JPanel();
@@ -83,8 +91,9 @@ class GroundItemColourGroupsPanel extends PluginPanel
 	private void showEmptyMessage()
 	{
 		JLabel empty = new JLabel("<html><body style='width: 180px'>No items have a custom Ground Items colour "
-			+ "yet. Click \"+ Add\" above, or right-click an item on the ground and use the Ground Items "
-			+ "highlight option - it will show up here.</body></html>");
+			+ "yet. Click \"+ Add\" to pick one item, \"+ Pattern\" to match many by name (e.g. clue rewards), or "
+			+ "right-click an item on the ground and use the Ground Items highlight option - it will show up "
+			+ "here.</body></html>");
 		empty.setForeground(ColorScheme.LIGHT_GRAY_COLOR);
 		groupsContainer.add(empty);
 	}
@@ -93,6 +102,7 @@ class GroundItemColourGroupsPanel extends PluginPanel
 	{
 		Color colour = group.getColour();
 		List<ColouredGroundItem> items = group.getItems();
+		List<PatternMatch> patternMatches = group.getPatternMatches();
 		boolean enabled = group.isEnabled();
 
 		JPanel panel = new JPanel();
@@ -100,8 +110,10 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		panel.setBorder(BorderFactory.createLineBorder(enabled ? colour : ColorScheme.MEDIUM_GRAY_COLOR, 2));
 
-		JLabel swatchLabel = new JLabel(String.format("#%06X  (%d item%s)%s",
-			colour.getRGB() & 0xFFFFFF, items.size(), items.size() == 1 ? "" : "s", enabled ? "" : " — off"));
+		String patternSuffix = patternMatches.isEmpty() ? ""
+			: String.format(", %d pattern%s", patternMatches.size(), patternMatches.size() == 1 ? "" : "s");
+		JLabel swatchLabel = new JLabel(String.format("#%06X  (%d item%s%s)%s",
+			colour.getRGB() & 0xFFFFFF, items.size(), items.size() == 1 ? "" : "s", patternSuffix, enabled ? "" : " — off"));
 		swatchLabel.setOpaque(true);
 		swatchLabel.setBackground(colour);
 		swatchLabel.setForeground(readableTextColour(colour));
@@ -111,8 +123,10 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		enabledCheckbox.setSelected(enabled);
 		enabledCheckbox.setOpaque(false);
 		enabledCheckbox.setToolTipText(enabled
-			? "Turn off this colour group (removes the highlight from every item in it, but remembers the colour)"
-			: "Turn this colour group back on (restores the highlight for every item in it)");
+			? "Turn off this colour group (removes the highlight from every item in it, but remembers the colour "
+				+ "and pauses any wildcard patterns)"
+			: "Turn this colour group back on (restores the highlight for every item in it, and resumes any "
+				+ "wildcard patterns)");
 		enabledCheckbox.addActionListener(e -> callbacks.setGroupEnabled(colour, enabledCheckbox.isSelected()));
 
 		JButton addToGroupButton = new JButton("+");
@@ -120,13 +134,37 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		addToGroupButton.setMargin(new java.awt.Insets(0, 4, 0, 4));
 		addToGroupButton.addActionListener(e -> callbacks.addToGroup(colour));
 
+		List<String> patterns = new ArrayList<>();
+		for (PatternMatch patternMatch : patternMatches)
+		{
+			patterns.add(patternMatch.getPattern());
+		}
+
+		JButton patternsButton = new JButton("*");
+		patternsButton.setToolTipText(patterns.isEmpty()
+			? "Add a wildcard name pattern (e.g. \"Clue scroll*\") so matching items join this colour automatically"
+			: "<html><body style='width:220px'>Add another wildcard pattern to this colour: " + String.join(", ", patterns)
+				+ "</body></html>");
+		patternsButton.setMargin(new java.awt.Insets(0, 4, 0, 4));
+		patternsButton.addActionListener(e -> callbacks.editPatterns(colour, String.join(", ", patterns)));
+
+		JPanel swatchButtons = new JPanel(new FlowLayout(FlowLayout.RIGHT, 2, 0));
+		swatchButtons.setBackground(colour);
+		swatchButtons.add(patternsButton);
+		swatchButtons.add(addToGroupButton);
+
 		JPanel swatchRow = new JPanel(new BorderLayout());
 		swatchRow.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
 		swatchRow.setBackground(colour);
 		swatchRow.add(enabledCheckbox, BorderLayout.WEST);
 		swatchRow.add(swatchLabel, BorderLayout.CENTER);
-		swatchRow.add(addToGroupButton, BorderLayout.EAST);
+		swatchRow.add(swatchButtons, BorderLayout.EAST);
 		panel.add(swatchRow);
+
+		for (PatternMatch patternMatch : patternMatches)
+		{
+			panel.add(buildPatternRow(colour, patternMatch));
+		}
 
 		for (ColouredGroundItem item : items)
 		{
@@ -134,6 +172,51 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		}
 
 		return panel;
+	}
+
+	/**
+	 * One row per wildcard pattern - not one per matching item, however many there are - showing
+	 * the pattern text itself and a live count of how many items currently match it.
+	 */
+	private JPanel buildPatternRow(Color groupColour, PatternMatch patternMatch)
+	{
+		JPanel row = new JPanel(new BorderLayout(6, 0));
+		row.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		row.setBorder(BorderFactory.createEmptyBorder(3, 6, 3, 6));
+
+		JLabel iconLabel = new JLabel();
+		iconLabel.setPreferredSize(new Dimension(20, 20));
+		iconLabel.setOpaque(true);
+		iconLabel.setBackground(ColorScheme.MEDIUM_GRAY_COLOR);
+		iconLabel.setBorder(BorderFactory.createLineBorder(ColorScheme.LIGHT_GRAY_COLOR, 1));
+
+		JLabel nameLabel = new JLabel(String.format("%s  (%d item%s)", patternMatch.getPattern(),
+			patternMatch.getMatchCount(), patternMatch.getMatchCount() == 1 ? "" : "s"));
+		nameLabel.setForeground(Color.WHITE);
+		nameLabel.setToolTipText("<html><body style='width:220px'>Wildcard pattern - every item whose name matches "
+			+ "this gets this group's colour automatically, including items added to the game later.</body></html>");
+
+		JButton recolourButton = new JButton();
+		recolourButton.setToolTipText("Move this pattern (and its matches) to a different colour group");
+		recolourButton.setBackground(groupColour);
+		recolourButton.setPreferredSize(new Dimension(16, 16));
+		recolourButton.addActionListener(e -> callbacks.changePatternColour(groupColour, patternMatch.getPattern()));
+
+		JButton removeButton = new JButton("×");
+		removeButton.setToolTipText("Remove this wildcard pattern");
+		removeButton.setMargin(new java.awt.Insets(0, 4, 0, 4));
+		removeButton.addActionListener(e -> callbacks.removePattern(groupColour, patternMatch.getPattern()));
+
+		JPanel actions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 4, 0));
+		actions.setBackground(ColorScheme.DARKER_GRAY_COLOR);
+		actions.add(recolourButton);
+		actions.add(removeButton);
+
+		row.add(iconLabel, BorderLayout.WEST);
+		row.add(nameLabel, BorderLayout.CENTER);
+		row.add(actions, BorderLayout.EAST);
+
+		return row;
 	}
 
 	private JPanel buildItemRow(Color groupColour, ColouredGroundItem item)

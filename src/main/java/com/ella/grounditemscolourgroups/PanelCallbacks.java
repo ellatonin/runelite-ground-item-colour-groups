@@ -10,6 +10,14 @@ interface PanelCallbacks
 
 	void addToGroup(Color groupColour);
 
+	void addPatternGroup();
+
+	void editPatterns(Color groupColour, String currentPatternsCsv);
+
+	void removePattern(Color groupColour, String pattern);
+
+	void changePatternColour(Color currentColour, String pattern);
+
 	void removeItem(int itemId);
 
 	void changeItemColour(int itemId, Color currentColour);
