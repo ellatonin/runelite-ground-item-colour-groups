@@ -5,11 +5,11 @@ import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.util.List;
-import java.util.Map;
 import javax.swing.BorderFactory;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.SwingConstants;
@@ -59,19 +59,19 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		showEmptyMessage();
 	}
 
-	void showGroups(Map<Color, List<ColouredGroundItem>> grouped)
+	void showGroups(List<ColourGroup> groups)
 	{
 		groupsContainer.removeAll();
 
-		if (grouped.isEmpty())
+		if (groups.isEmpty())
 		{
 			showEmptyMessage();
 		}
 		else
 		{
-			for (Map.Entry<Color, List<ColouredGroundItem>> entry : grouped.entrySet())
+			for (ColourGroup group : groups)
 			{
-				groupsContainer.add(buildGroupPanel(entry.getKey(), entry.getValue()));
+				groupsContainer.add(buildGroupPanel(group));
 				groupsContainer.add(Box.createVerticalStrut(6));
 			}
 		}
@@ -89,19 +89,31 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		groupsContainer.add(empty);
 	}
 
-	private JPanel buildGroupPanel(Color colour, List<ColouredGroundItem> items)
+	private JPanel buildGroupPanel(ColourGroup group)
 	{
+		Color colour = group.getColour();
+		List<ColouredGroundItem> items = group.getItems();
+		boolean enabled = group.isEnabled();
+
 		JPanel panel = new JPanel();
 		panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
 		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
-		panel.setBorder(BorderFactory.createLineBorder(colour, 2));
+		panel.setBorder(BorderFactory.createLineBorder(enabled ? colour : ColorScheme.MEDIUM_GRAY_COLOR, 2));
 
-		JLabel swatchLabel = new JLabel(String.format("#%06X  (%d item%s)",
-			colour.getRGB() & 0xFFFFFF, items.size(), items.size() == 1 ? "" : "s"));
+		JLabel swatchLabel = new JLabel(String.format("#%06X  (%d item%s)%s",
+			colour.getRGB() & 0xFFFFFF, items.size(), items.size() == 1 ? "" : "s", enabled ? "" : " — off"));
 		swatchLabel.setOpaque(true);
 		swatchLabel.setBackground(colour);
 		swatchLabel.setForeground(readableTextColour(colour));
 		swatchLabel.setHorizontalAlignment(SwingConstants.CENTER);
+
+		JCheckBox enabledCheckbox = new JCheckBox();
+		enabledCheckbox.setSelected(enabled);
+		enabledCheckbox.setOpaque(false);
+		enabledCheckbox.setToolTipText(enabled
+			? "Turn off this colour group (removes the highlight from every item in it, but remembers the colour)"
+			: "Turn this colour group back on (restores the highlight for every item in it)");
+		enabledCheckbox.addActionListener(e -> callbacks.setGroupEnabled(colour, enabledCheckbox.isSelected()));
 
 		JButton addToGroupButton = new JButton("+");
 		addToGroupButton.setToolTipText("Add another item to this colour");
@@ -111,6 +123,7 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		JPanel swatchRow = new JPanel(new BorderLayout());
 		swatchRow.setBorder(BorderFactory.createEmptyBorder(4, 4, 4, 4));
 		swatchRow.setBackground(colour);
+		swatchRow.add(enabledCheckbox, BorderLayout.WEST);
 		swatchRow.add(swatchLabel, BorderLayout.CENTER);
 		swatchRow.add(addToGroupButton, BorderLayout.EAST);
 		panel.add(swatchRow);

@@ -7,6 +7,7 @@ import java.awt.RenderingHints;
 import java.awt.Window;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -45,6 +46,15 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 	 * That constant isn't public, so it's duplicated here rather than depended on.
 	 */
 	private static final String HIGHLIGHT_KEY_PREFIX = "highlight_";
+
+	/**
+	 * This plugin's own config group, used only to remember the colour of items whose whole colour
+	 * group has been bulk-disabled from the panel. Disabling a group unsets its items' entries from
+	 * GroundItemsConfig (so the game stops highlighting them) but stashes the colour here under
+	 * DISABLED_KEY_PREFIX + itemId, so re-enabling the group can restore the exact same colour.
+	 */
+	private static final String OWN_CONFIG_GROUP = "grounditemcolourgroups";
+	private static final String DISABLED_KEY_PREFIX = "disabled_";
 
 	@Inject
 	private ConfigManager configManager;
@@ -112,8 +122,8 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 	{
 		clientThread.invoke(() ->
 		{
-			Map<Color, List<ColouredGroundItem>> grouped = buildGroups();
-			SwingUtilities.invokeLater(() -> panel.showGroups(grouped));
+			List<ColourGroup> groups = buildGroups();
+			SwingUtilities.invokeLater(() -> panel.showGroups(groups));
 		});
 	}
 
@@ -141,6 +151,7 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 	public void removeItem(int itemId)
 	{
 		configManager.unsetConfiguration(GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX + itemId);
+		configManager.unsetConfiguration(OWN_CONFIG_GROUP, DISABLED_KEY_PREFIX + itemId);
 	}
 
 	@Override
@@ -151,10 +162,61 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 		{
 			if (colour != null)
 			{
-				configManager.setConfiguration(GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX + itemId, colour);
+				boolean disabled = configManager.getConfiguration(OWN_CONFIG_GROUP, DISABLED_KEY_PREFIX + itemId, Color.class) != null;
+				if (disabled)
+				{
+					configManager.setConfiguration(OWN_CONFIG_GROUP, DISABLED_KEY_PREFIX + itemId, colour);
+				}
+				else
+				{
+					configManager.setConfiguration(GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX + itemId, colour);
+				}
 			}
 		});
 		picker.setVisible(true);
+	}
+
+	@Override
+	public void setGroupEnabled(Color groupColour, boolean enabled)
+	{
+		if (enabled)
+		{
+			moveGroup(groupColour, OWN_CONFIG_GROUP, DISABLED_KEY_PREFIX, GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX);
+		}
+		else
+		{
+			moveGroup(groupColour, GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX, OWN_CONFIG_GROUP, DISABLED_KEY_PREFIX);
+		}
+		refresh();
+	}
+
+	/**
+	 * Moves every item whose colour under {@code fromGroup}/{@code fromPrefix} equals
+	 * {@code colour} over to {@code toGroup}/{@code toPrefix}. Used to bulk enable/disable a whole
+	 * colour group at once while keeping track of which colour each item should return to.
+	 */
+	private void moveGroup(Color colour, String fromGroup, String fromPrefix, String toGroup, String toPrefix)
+	{
+		String prefix = fromGroup + "." + fromPrefix;
+		List<String> keys = configManager.getConfigurationKeys(prefix);
+
+		for (String wholeKey : keys)
+		{
+			int itemId = parseItemId(wholeKey, prefix);
+			if (itemId < 0)
+			{
+				continue;
+			}
+
+			Color itemColour = configManager.getConfiguration(fromGroup, fromPrefix + itemId, Color.class);
+			if (itemColour == null || !itemColour.equals(colour))
+			{
+				continue;
+			}
+
+			configManager.setConfiguration(toGroup, toPrefix + itemId, itemColour);
+			configManager.unsetConfiguration(fromGroup, fromPrefix + itemId);
+		}
 	}
 
 	private void openItemSearch(Color colour)
@@ -222,26 +284,52 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 		return items;
 	}
 
-	private Map<Color, List<ColouredGroundItem>> buildGroups()
+	private List<ColourGroup> buildGroups()
 	{
-		String prefix = GroundItemsConfig.GROUP + "." + HIGHLIGHT_KEY_PREFIX;
+		Map<Color, List<ColouredGroundItem>> enabledItems = collectItems(GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX);
+		Map<Color, List<ColouredGroundItem>> disabledItems = collectItems(OWN_CONFIG_GROUP, DISABLED_KEY_PREFIX);
+
+		Map<Color, Boolean> enabledByColour = new TreeMap<>(GroundItemColourGroupsPlugin::compareByHue);
+		enabledItems.keySet().forEach(colour -> enabledByColour.put(colour, true));
+		disabledItems.keySet().forEach(colour -> enabledByColour.putIfAbsent(colour, false));
+
+		List<ColourGroup> groups = new ArrayList<>();
+		for (Map.Entry<Color, Boolean> entry : enabledByColour.entrySet())
+		{
+			Color colour = entry.getKey();
+
+			List<ColouredGroundItem> items = new ArrayList<>();
+			items.addAll(enabledItems.getOrDefault(colour, Collections.emptyList()));
+			items.addAll(disabledItems.getOrDefault(colour, Collections.emptyList()));
+			items.sort(Comparator.comparing(ColouredGroundItem::getName, String.CASE_INSENSITIVE_ORDER));
+
+			groups.add(new ColourGroup(colour, entry.getValue(), items));
+		}
+
+		return groups;
+	}
+
+	/**
+	 * Reads every {@code keyPrefix + itemId} entry under {@code configGroup}, resolving each item's
+	 * colour and display info, and groups the results by colour. Used for both the live
+	 * GroundItemsConfig entries and this plugin's own store of bulk-disabled items.
+	 */
+	private Map<Color, List<ColouredGroundItem>> collectItems(String configGroup, String keyPrefix)
+	{
+		String prefix = configGroup + "." + keyPrefix;
 		List<String> keys = configManager.getConfigurationKeys(prefix);
 
-		Map<Color, List<ColouredGroundItem>> grouped = new TreeMap<>(GroundItemColourGroupsPlugin::compareByHue);
+		Map<Color, List<ColouredGroundItem>> grouped = new LinkedHashMap<>();
 
 		for (String wholeKey : keys)
 		{
-			int itemId;
-			try
-			{
-				itemId = Integer.parseInt(wholeKey.substring(prefix.length()));
-			}
-			catch (NumberFormatException e)
+			int itemId = parseItemId(wholeKey, prefix);
+			if (itemId < 0)
 			{
 				continue;
 			}
 
-			Color colour = configManager.getConfiguration(GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX + itemId, Color.class);
+			Color colour = configManager.getConfiguration(configGroup, keyPrefix + itemId, Color.class);
 			if (colour == null)
 			{
 				continue;
@@ -263,12 +351,19 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 				.add(new ColouredGroundItem(itemId, name, image));
 		}
 
-		for (List<ColouredGroundItem> items : grouped.values())
-		{
-			items.sort(Comparator.comparing(ColouredGroundItem::getName, String.CASE_INSENSITIVE_ORDER));
-		}
-
 		return grouped;
+	}
+
+	private static int parseItemId(String wholeKey, String prefix)
+	{
+		try
+		{
+			return Integer.parseInt(wholeKey.substring(prefix.length()));
+		}
+		catch (NumberFormatException e)
+		{
+			return -1;
+		}
 	}
 
 	private static int compareByHue(Color a, Color b)

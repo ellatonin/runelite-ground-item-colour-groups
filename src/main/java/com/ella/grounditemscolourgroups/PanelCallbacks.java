@@ -13,4 +13,6 @@ interface PanelCallbacks
 	void removeItem(int itemId);
 
 	void changeItemColour(int itemId, Color currentColour);
+
+	void setGroupEnabled(Color groupColour, boolean enabled);
 }
