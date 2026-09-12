@@ -18,6 +18,8 @@ interface PanelCallbacks
 
 	void changePatternColour(Color currentColour, String pattern);
 
+	void renameGroup(Color groupColour);
+
 	void removeItem(int itemId);
 
 	void changeItemColour(int itemId, Color currentColour);

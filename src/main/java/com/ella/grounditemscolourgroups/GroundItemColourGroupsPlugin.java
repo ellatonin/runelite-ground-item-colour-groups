@@ -54,13 +54,15 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 	/**
 	 * This plugin's own config group, used for state the built-in Ground Items plugin has no notion
 	 * of: remembering the colour of bulk-disabled, individually-added items (DISABLED_KEY_PREFIX +
-	 * itemId), which whole colour groups are currently toggled off (DISABLED_GROUPS_KEY), and each
-	 * colour's wildcard name patterns (PATTERN_KEY_PREFIX + colour hex).
+	 * itemId), which whole colour groups are currently toggled off (DISABLED_GROUPS_KEY), each
+	 * colour's wildcard name patterns (PATTERN_KEY_PREFIX + colour hex), and each colour's custom
+	 * display name (NAME_KEY_PREFIX + colour hex).
 	 */
 	private static final String OWN_CONFIG_GROUP = "grounditemcolourgroups";
 	private static final String DISABLED_KEY_PREFIX = "disabled_";
 	private static final String DISABLED_GROUPS_KEY = "disabledGroupColours";
 	private static final String PATTERN_KEY_PREFIX = "patterns_";
+	private static final String NAME_KEY_PREFIX = "name_";
 
 	@Inject
 	private ConfigManager configManager;
@@ -226,6 +228,41 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 			}
 		});
 		picker.setVisible(true);
+	}
+
+	@Override
+	public void renameGroup(Color groupColour)
+	{
+		String hex = colourHex(groupColour);
+		String currentName = configManager.getConfiguration(OWN_CONFIG_GROUP, NAME_KEY_PREFIX + hex);
+
+		Object input = JOptionPane.showInputDialog(panel,
+			"Name for this colour group (leave blank to show its colour code instead):",
+			"Rename colour group", JOptionPane.PLAIN_MESSAGE, null, null, currentName == null ? "" : currentName);
+
+		if (input != null)
+		{
+			String trimmed = input.toString().trim();
+			if (trimmed.isEmpty())
+			{
+				configManager.unsetConfiguration(OWN_CONFIG_GROUP, NAME_KEY_PREFIX + hex);
+			}
+			else
+			{
+				configManager.setConfiguration(OWN_CONFIG_GROUP, NAME_KEY_PREFIX + hex, trimmed);
+			}
+			refresh();
+		}
+	}
+
+	private String groupDisplayName(Color colour)
+	{
+		String custom = configManager.getConfiguration(OWN_CONFIG_GROUP, NAME_KEY_PREFIX + colourHex(colour));
+		if (custom != null && !custom.trim().isEmpty())
+		{
+			return custom.trim();
+		}
+		return String.format("#%06X", colour.getRGB() & 0xFFFFFF);
 	}
 
 	/**
@@ -669,7 +706,7 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 				patternMatches.add(new PatternMatch(pattern, count));
 			}
 
-			groups.add(new ColourGroup(colour, entry.getValue(), items, patternMatches));
+			groups.add(new ColourGroup(colour, groupDisplayName(colour), entry.getValue(), items, patternMatches));
 		}
 
 		return groups;

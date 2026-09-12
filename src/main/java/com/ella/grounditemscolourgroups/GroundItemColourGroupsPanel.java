@@ -2,8 +2,11 @@ package com.ella.grounditemscolourgroups;
 
 import java.awt.BorderLayout;
 import java.awt.Color;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.List;
 import javax.swing.BorderFactory;
@@ -110,12 +113,21 @@ class GroundItemColourGroupsPanel extends PluginPanel
 		panel.setBackground(ColorScheme.DARKER_GRAY_COLOR);
 		panel.setBorder(BorderFactory.createLineBorder(enabled ? colour : ColorScheme.MEDIUM_GRAY_COLOR, 2));
 
-		JLabel swatchLabel = new JLabel(String.format("#%06X%s",
-			colour.getRGB() & 0xFFFFFF, enabled ? "" : " — off"));
+		JLabel swatchLabel = new JLabel(group.getName() + (enabled ? "" : " — off"));
 		swatchLabel.setOpaque(true);
 		swatchLabel.setBackground(colour);
 		swatchLabel.setForeground(readableTextColour(colour));
 		swatchLabel.setHorizontalAlignment(SwingConstants.CENTER);
+		swatchLabel.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+		swatchLabel.setToolTipText("Click to rename this colour group");
+		swatchLabel.addMouseListener(new MouseAdapter()
+		{
+			@Override
+			public void mouseClicked(MouseEvent e)
+			{
+				callbacks.renameGroup(colour);
+			}
+		});
 
 		JCheckBox enabledCheckbox = new JCheckBox();
 		enabledCheckbox.setSelected(enabled);
