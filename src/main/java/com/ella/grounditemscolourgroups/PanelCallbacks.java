@@ -20,6 +20,8 @@ interface PanelCallbacks
 
 	void renameGroup(Color groupColour);
 
+	void deleteGroup(Color groupColour);
+
 	void removeItem(int itemId);
 
 	void changeItemColour(int itemId, Color currentColour);

@@ -2,6 +2,7 @@ package com.ella.grounditemscolourgroups;
 
 import java.awt.Color;
 import java.util.List;
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 
 /**
@@ -11,8 +12,14 @@ import lombok.Getter;
  * wildcard name patterns that automatically pull in matching items - each shown as a single
  * summary row (see {@link PatternMatch}) rather than one row per matching item - and the group's
  * display name, which defaults to the colour's hex code until the user renames it.
+ *
+ * <p>Value-based equals/hashCode (relying on {@code items} holding the same cached
+ * {@link ColouredGroundItem} instances - see {@link GroundItemColourGroupsPlugin}'s hydration
+ * cache - whenever nothing actually changed for a colour) so the panel can recognise a group as
+ * unchanged since its last render and skip rebuilding its (potentially hundreds of) rows.
  */
 @Getter
+@EqualsAndHashCode
 class ColourGroup
 {
 	private final Color colour;

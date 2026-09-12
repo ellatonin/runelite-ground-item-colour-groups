@@ -9,12 +9,14 @@ import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 import javax.inject.Inject;
 import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
@@ -33,7 +35,6 @@ import net.runelite.client.ui.NavigationButton;
 import net.runelite.client.ui.components.colorpicker.ColorPickerManager;
 import net.runelite.client.ui.components.colorpicker.RuneliteColorPicker;
 import net.runelite.client.util.AsyncBufferedImage;
-import net.runelite.client.util.WildcardMatcher;
 
 @Slf4j
 @PluginDescriptor(
@@ -100,6 +101,29 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 	 * caller of the bulk write still triggers exactly one refresh() itself once it's done.
 	 */
 	private volatile boolean suppressConfigEvents;
+
+	/**
+	 * Compiled form of every wildcard pattern seen so far, keyed by the raw pattern text.
+	 * {@link net.runelite.client.util.WildcardMatcher#matches} recompiles a fresh {@link Pattern}
+	 * from scratch on every single call (it ultimately calls {@link String#matches}, which never
+	 * caches) - fine for checking one string once, but ruinous when matching the same handful of
+	 * patterns against every item in the client's ~20-30k item catalogue on every refresh, which is
+	 * exactly what pattern matching/counting does. Compiling each pattern once here and reusing the
+	 * compiled Pattern (a cheap Matcher per item, no recompilation) is what makes that affordable.
+	 * Only ever touched from the client thread, so a plain HashMap is fine.
+	 */
+	private final Map<String, Pattern> wildcardPatternCache = new HashMap<>();
+
+	/**
+	 * An item's name and icon never change, so once resolved for an id it's kept here rather than
+	 * re-fetched on every refresh. Without this, having, say, 400 items in one colour meant every
+	 * single refresh - triggered by altering ANY group, not just that one - redid all 400
+	 * itemManager lookups and, more importantly (see ColourGroup/PatternMatch's equals()), produced
+	 * 400 brand new item objects that could never compare equal to the previous refresh's, forcing
+	 * the panel to rebuild that whole group's rows every time regardless of what actually changed.
+	 * Only ever touched from the client thread, so a plain HashMap is fine.
+	 */
+	private final Map<Integer, ColouredGroundItem> hydrationCache = new HashMap<>();
 
 	@Override
 	protected void startUp()
@@ -252,6 +276,71 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 				configManager.setConfiguration(OWN_CONFIG_GROUP, NAME_KEY_PREFIX + hex, trimmed);
 			}
 			refresh();
+		}
+	}
+
+	@Override
+	public void deleteGroup(Color groupColour)
+	{
+		// A plain YES_NO showConfirmDialog defaults focus to Yes; built via showOptionDialog instead
+		// so "No" is the focused/default button - accidentally hitting enter shouldn't delete a group.
+		Object[] options = { "Yes", "No" };
+		int confirmed = JOptionPane.showOptionDialog(panel,
+			"<html><body style='width:220px'>Delete this whole colour group? This removes every item's highlight "
+				+ "and every wildcard pattern in it. This can't be undone.</body></html>",
+			"Delete colour group", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[1]);
+
+		if (confirmed != 0)
+		{
+			return;
+		}
+
+		clientThread.invoke(() ->
+		{
+			String hex = colourHex(groupColour);
+
+			suppressConfigEvents = true;
+			try
+			{
+				unsetAllAtColour(GroundItemsConfig.GROUP, HIGHLIGHT_KEY_PREFIX, groupColour);
+				unsetAllAtColour(OWN_CONFIG_GROUP, DISABLED_KEY_PREFIX, groupColour);
+			}
+			finally
+			{
+				suppressConfigEvents = false;
+			}
+
+			configManager.unsetConfiguration(OWN_CONFIG_GROUP, PATTERN_KEY_PREFIX + hex);
+			configManager.unsetConfiguration(OWN_CONFIG_GROUP, NAME_KEY_PREFIX + hex);
+			removeDisabledGroupMarker(groupColour);
+
+			refresh();
+		});
+	}
+
+	/**
+	 * Unsets every {@code keyPrefix + itemId} entry under {@code configGroup} whose stored colour
+	 * equals {@code colour} - the "delete everything at this colour" building block shared by
+	 * deleteGroup for both the live GroundItemsConfig entries and this plugin's own disabled store.
+	 */
+	private void unsetAllAtColour(String configGroup, String keyPrefix, Color colour)
+	{
+		String prefix = configGroup + "." + keyPrefix;
+		List<String> keys = configManager.getConfigurationKeys(prefix);
+
+		for (String wholeKey : keys)
+		{
+			int itemId = parseItemId(wholeKey, prefix);
+			if (itemId < 0)
+			{
+				continue;
+			}
+
+			Color itemColour = configManager.getConfiguration(configGroup, keyPrefix + itemId, Color.class);
+			if (colour.equals(itemColour))
+			{
+				configManager.unsetConfiguration(configGroup, keyPrefix + itemId);
+			}
 		}
 	}
 
@@ -424,7 +513,7 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 	private void promptForPatterns(Color colour, String initialText)
 	{
 		Object input = JOptionPane.showInputDialog(panel,
-			"<html><body style='width:260px'>Comma-separated wildcard patterns (use * and ?), matched "
+			"<html><body style='width:260px'>Comma-separated wildcard patterns (* matches anything), matched "
 				+ "case-insensitively against item names - e.g. \"Clue scroll*\". Matching items get this "
 				+ "colour automatically (shown as a count, not listed individually), including items added to "
 				+ "the game later. Leave blank to remove all patterns from this group.</body></html>",
@@ -714,26 +803,30 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 
 	private ColouredGroundItem hydrate(int itemId)
 	{
-		String name;
-		try
+		return hydrationCache.computeIfAbsent(itemId, id ->
 		{
-			name = itemManager.getItemComposition(itemId).getName();
-		}
-		catch (Exception e)
-		{
-			name = "Item " + itemId;
-		}
+			String name;
+			try
+			{
+				name = itemManager.getItemComposition(id).getName();
+			}
+			catch (Exception e)
+			{
+				name = "Item " + id;
+			}
 
-		AsyncBufferedImage image = itemManager.getImage(itemId);
-		return new ColouredGroundItem(itemId, name, image);
+			AsyncBufferedImage image = itemManager.getImage(id);
+			return new ColouredGroundItem(id, name, image);
+		});
 	}
 
-	private static int countMatches(String pattern, List<SearchItem> index)
+	private int countMatches(String pattern, List<SearchItem> index)
 	{
+		Pattern compiled = compileWildcard(pattern);
 		int count = 0;
 		for (SearchItem candidate : index)
 		{
-			if (WildcardMatcher.matches(pattern, candidate.getName()))
+			if (compiled.matcher(candidate.getName()).matches())
 			{
 				count++;
 			}
@@ -879,16 +972,56 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 		return matchIdsByColour;
 	}
 
-	private static boolean matchesAny(String name, List<String> patterns)
+	private boolean matchesAny(String name, List<String> patterns)
 	{
 		for (String pattern : patterns)
 		{
-			if (WildcardMatcher.matches(pattern, name))
+			if (compileWildcard(pattern).matcher(name).matches())
 			{
 				return true;
 			}
 		}
 		return false;
+	}
+
+	private Pattern compileWildcard(String wildcard)
+	{
+		return wildcardPatternCache.computeIfAbsent(wildcard, GroundItemColourGroupsPlugin::translateWildcardToPattern);
+	}
+
+	/**
+	 * Translates a simple {@code *}-wildcard string into an equivalent case-insensitive regex, the
+	 * same semantics as {@link net.runelite.client.util.WildcardMatcher}: every run of literal
+	 * characters is escaped verbatim (so regex metacharacters in a pattern like "(t)" are matched
+	 * literally, not interpreted), and every run of one or more {@code *} becomes {@code .*}.
+	 */
+	private static Pattern translateWildcardToPattern(String wildcard)
+	{
+		StringBuilder regex = new StringBuilder();
+		int length = wildcard.length();
+		int i = 0;
+		while (i < length)
+		{
+			int star = wildcard.indexOf('*', i);
+			if (star < 0)
+			{
+				regex.append(Pattern.quote(wildcard.substring(i)));
+				break;
+			}
+
+			if (star > i)
+			{
+				regex.append(Pattern.quote(wildcard.substring(i, star)));
+			}
+			regex.append(".*");
+
+			i = star + 1;
+			while (i < length && wildcard.charAt(i) == '*')
+			{
+				i++;
+			}
+		}
+		return Pattern.compile(regex.toString(), Pattern.CASE_INSENSITIVE);
 	}
 
 	private static List<String> splitPatterns(String csv)
