@@ -648,8 +648,8 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 		panel.setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
 		clientThread.invoke(() ->
 		{
-			List<SearchItem> items = buildItemIndex();
-			itemIndex = items;
+			ensureItemIndexBuilt();
+			List<SearchItem> items = itemIndex == null ? Collections.emptyList() : itemIndex;
 
 			SwingUtilities.invokeLater(() ->
 			{
@@ -686,7 +686,19 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 				continue;
 			}
 
-			String name = itemManager.getItemComposition(canonicalId).getName();
+			String name;
+			try
+			{
+				name = itemManager.getItemComposition(canonicalId).getName();
+			}
+			catch (Exception e)
+			{
+				// Skip just this one id rather than letting the whole scan fail (and itemIndex stay
+				// null, silently breaking every wildcard pattern) - see hydrate() for the same
+				// item-cache-not-ready-yet situation this guards against.
+				continue;
+			}
+
 			if (name == null || name.equalsIgnoreCase("null"))
 			{
 				continue;
@@ -705,7 +717,14 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 	{
 		if (itemIndex == null)
 		{
-			itemIndex = buildItemIndex();
+			List<SearchItem> built = buildItemIndex();
+			if (!built.isEmpty())
+			{
+				itemIndex = built;
+			}
+			// Otherwise the item cache probably wasn't ready yet (e.g. right after a game update,
+			// on the very first refresh of a session) and the scan skipped everything - leave
+			// itemIndex null so the next call retries, rather than getting stuck permanently empty.
 		}
 	}
 
@@ -797,21 +816,35 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 
 	private ColouredGroundItem hydrate(int itemId)
 	{
-		return hydrationCache.computeIfAbsent(itemId, id ->
+		ColouredGroundItem cached = hydrationCache.get(itemId);
+		if (cached != null)
 		{
-			String name;
-			try
-			{
-				name = itemManager.getItemComposition(id).getName();
-			}
-			catch (Exception e)
-			{
-				name = "Item " + id;
-			}
+			return cached;
+		}
 
-			AsyncBufferedImage image = itemManager.getImage(id);
-			return new ColouredGroundItem(id, name, image);
-		});
+		String name;
+		try
+		{
+			name = itemManager.getItemComposition(itemId).getName();
+		}
+		catch (Exception e)
+		{
+			name = null;
+		}
+
+		AsyncBufferedImage image = itemManager.getImage(itemId);
+
+		if (name == null || name.isEmpty() || name.equalsIgnoreCase("null"))
+		{
+			// The item cache may not be ready yet - e.g. right after a game update, on the very
+			// first refresh of a session. Don't cache this fallback: a real name should resolve on
+			// a later refresh once it is ready, and unlike a real result this must be free to retry.
+			return new ColouredGroundItem(itemId, "Item " + itemId, image);
+		}
+
+		ColouredGroundItem hydrated = new ColouredGroundItem(itemId, name, image);
+		hydrationCache.put(itemId, hydrated);
+		return hydrated;
 	}
 
 	/**
