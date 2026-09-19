@@ -70,8 +70,18 @@ class GroundItemColourGroupsPanel extends PluginPanel
 			+ "clue rewards.</body></html>");
 		addPatternButton.addActionListener(e -> callbacks.addPatternGroup());
 
-		JButton refreshButton = new JButton("Refresh");
-		refreshButton.addActionListener(e -> callbacks.refresh());
+		// A single refresh action, always a full one: wipes this plugin's cached item names/icons
+		// and its wildcard item index before rebuilding, so there's no separate "lightweight" mode
+		// that could still be stuck showing "Item <number>" or a pattern stuck at 0 matches (both of
+		// which can happen if the game's item cache wasn't ready yet the moment the panel first
+		// loaded). A compact icon rather than a text button so it fits on one row alongside the
+		// other two - the panel is a fixed 225px-wide sidebar (PluginPanel.PANEL_WIDTH).
+		JButton refreshButton = new JButton("↻");
+		refreshButton.setToolTipText("<html><body style='width:220px'>Refresh: re-scans everything, wiping this "
+			+ "plugin's cached item names/icons and wildcard item index first so it's always a full "
+			+ "rebuild.</body></html>");
+		refreshButton.setMargin(new java.awt.Insets(0, 6, 0, 6));
+		refreshButton.addActionListener(e -> callbacks.forceRefresh());
 
 		JPanel headerButtons = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
 		headerButtons.setBackground(ColorScheme.DARK_GRAY_COLOR);

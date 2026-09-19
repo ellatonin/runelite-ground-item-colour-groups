@@ -4,7 +4,7 @@ import java.awt.Color;
 
 interface PanelCallbacks
 {
-	void refresh();
+	void forceRefresh();
 
 	void addNewGroup();
 

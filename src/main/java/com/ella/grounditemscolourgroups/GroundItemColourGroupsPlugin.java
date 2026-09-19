@@ -167,13 +167,28 @@ public class GroundItemColourGroupsPlugin extends Plugin implements PanelCallbac
 		}
 	}
 
-	@Override
-	public void refresh()
+	private void refresh()
 	{
 		clientThread.invoke(() ->
 		{
 			List<ColourGroup> groups = buildGroups();
 			SwingUtilities.invokeLater(() -> panel.showGroups(groups));
+		});
+	}
+
+	@Override
+	public void forceRefresh()
+	{
+		clientThread.invoke(() ->
+		{
+			// The escape hatch for exactly the kind of stuck state a bad item-cache timing (e.g.
+			// right after a game update) can cause: wipes every cache this plugin keeps so
+			// everything - names, icons, the wildcard item index - gets looked up fresh, rather
+			// than only self-healing the specific entries a normal refresh happens to touch.
+			hydrationCache.clear();
+			wildcardPatternCache.clear();
+			itemIndex = null;
+			refresh();
 		});
 	}
 
